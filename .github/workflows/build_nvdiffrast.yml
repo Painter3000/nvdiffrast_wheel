@@ -1,0 +1,103 @@
+name: Build nvdiffrast Wheel (torch 2.11.0 + CUDA 12.8 + Blackwell)
+
+on:
+  workflow_dispatch:
+    inputs:
+      nvdiffrast_commit:
+        description: "nvdiffrast commit hash (default: PSHuman-Pin)"
+        required: false
+        # Dieser Commit entspricht dem Pin in PSHumans requirements.txt
+        default: "729261dc64c4241ea36efda84fbf532cc8b425b8"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    container:
+      image: nvidia/cuda:12.8.0-devel-ubuntu22.04
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      FORCE_CUDA: "1"
+      # Nur Blackwell sm_120 – kein Multi-Arch, spart RAM und Zeit
+      TORCH_CUDA_ARCH_LIST: "12.0"
+      MAX_JOBS: "4"
+
+    steps:
+      - name: Install system packages
+        run: |
+          apt-get update -y
+          apt-get install -y \
+            python3.10 python3.10-dev python3-pip python3-distutils \
+            git build-essential ninja-build \
+            # OpenGL / EGL-Headers werden von nvdiffrast benötigt
+            libgl1-mesa-dev libgles2-mesa-dev \
+            libegl1-mesa-dev libglib2.0-0
+          update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
+          update-alternatives --install /usr/bin/python  python  /usr/bin/python3.10 1
+          python --version
+          nvcc --version
+
+      - name: Upgrade pip and build tools
+        run: python -m pip install --upgrade pip setuptools wheel
+
+      - name: Install PyTorch 2.11.0 + cu128
+        run: |
+          python -m pip install \
+            torch==2.11.0 \
+            --index-url https://download.pytorch.org/whl/cu128
+          python -c "import torch; print('torch:', torch.__version__); print('CUDA:', torch.version.cuda)"
+
+      - name: Clone nvdiffrast (PSHuman-Pin)
+        run: |
+          COMMIT="${{ github.event.inputs.nvdiffrast_commit }}"
+          COMMIT="${COMMIT:-729261dc64c4241ea36efda84fbf532cc8b425b8}"
+          echo "Cloning nvdiffrast @ $COMMIT"
+          git clone https://github.com/NVlabs/nvdiffrast.git
+          cd nvdiffrast
+          git checkout "$COMMIT"
+          git log --oneline -1
+
+      - name: Build wheel
+        run: |
+          mkdir -p /tmp/wheels
+          cd nvdiffrast
+          python -m pip wheel . --no-build-isolation -w /tmp/wheels/
+          echo "--- Built files ---"
+          ls -lh /tmp/wheels/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nvdiffrast-torch2.11.0-cu128-sm120
+          path: /tmp/wheels/*.whl
+          retention-days: 30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nvdiffrast-torch2.11.0-cu128
+          name: "nvdiffrast – torch 2.11.0 + CUDA 12.8 + Blackwell (sm_120)"
+          body: |
+            Custom nvdiffrast Wheel für PSHuman / HF ZeroGPU Blackwell.
+
+            | Komponente | Version |
+            |---|---|
+            | Python | 3.10 |
+            | torch | 2.11.0+cu128 |
+            | CUDA | 12.8 |
+            | GPU-Architektur | **12.0 (Blackwell sm_120)** |
+            | nvdiffrast commit | `${{ github.event.inputs.nvdiffrast_commit || '729261dc...' }}` |
+
+            > Dieser Commit entspricht dem in PSHumans `requirements.txt` gepinnten Stand.
+
+            **Ersetzt in requirements.txt:**
+            ```diff
+            - git+https://github.com/NVlabs/nvdiffrast.git@729261dc...
+            + https://github.com/Painter3000/pytorch3d-Wheel/releases/download/nvdiffrast-torch2.11.0-cu128/nvdiffrast-XXX-cp310-cp310-linux_x86_64.whl
+            ```
+          files: /tmp/wheels/*.whl
+          draft: false
+          prerelease: false
