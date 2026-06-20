@@ -59,6 +59,6 @@ Ersetze in PSHuman `requirements.txt`:
 
 ---
 
-**Status:** ⏳ Build ausstehend
+**Status:** ⏳ Build erfolgreich!
 
 Teil der Blackwell-Kompatibilisierungs-Pipeline für PSHuman.
